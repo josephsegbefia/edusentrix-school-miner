@@ -1,0 +1,7 @@
+Metadata-Version: 2.4
+Name: edusentrix-school-miner
+Version: 0.1.0
+Summary: Internal CLI tool for acquiring, cleaning, validating, and exporting Ghanaian school directory data for EduSentrix.
+Requires-Python: >=3.9
+Dynamic: requires-python
+Dynamic: summary

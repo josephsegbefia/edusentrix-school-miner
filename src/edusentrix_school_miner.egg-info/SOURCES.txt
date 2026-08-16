@@ -1,0 +1,8 @@
+setup.py
+src/edusentrix_school_miner.egg-info/PKG-INFO
+src/edusentrix_school_miner.egg-info/SOURCES.txt
+src/edusentrix_school_miner.egg-info/dependency_links.txt
+src/edusentrix_school_miner.egg-info/entry_points.txt
+src/edusentrix_school_miner.egg-info/top_level.txt
+src/schoolminer/__init__.py
+src/schoolminer/cli.py

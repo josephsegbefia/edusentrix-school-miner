@@ -1,0 +1,27 @@
+# Python virtual environment
+.venv/
+
+# Python-generated files
+__pycache__/
+*.py[cod]
+
+# Test/cache directories
+.pytest_cache/
+.ruff_cache/
+
+# Environment variables
+.env
+
+# macOS
+.DS_Store
+
+# Generated School Miner data
+data/raw/
+data/processed/
+data/exports/
+data/rejected/
+
+# Local SQLite database
+*.db
+*.sqlite
+*.sqlite3
