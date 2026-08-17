@@ -1,46 +1,61 @@
-from urllib.parse import parse_qsl
+import pytest
 
-import httpx
+from schoolminer.sources.ghana_education_directory import (
+    extract_antiforgery_token,
+)
 
-from schoolminer.config import SEARCH_API_URL
-from schoolminer.sources.ghana_education_directory import fetch_search_page
+
+def test_extract_antiforgery_token() -> None:
+    html = """
+    <html>
+        <body>
+            <form id="__AjaxAntiForgeryForm">
+                <input
+                    name="__RequestVerificationToken"
+                    type="hidden"
+                    value="test-token-123"
+                />
+            </form>
+        </body>
+    </html>
+    """
+
+    token = extract_antiforgery_token(html)
+
+    assert token == "test-token-123"
 
 
-def test_fetch_search_page_sends_urlencoded_form_body() -> None:
-    captured_request: httpx.Request | None = None
+def test_extract_antiforgery_token_fails_when_missing() -> None:
+    html = """
+    <html>
+        <body>
+            <p>No token here.</p>
+        </body>
+    </html>
+    """
 
-    def handler(request: httpx.Request) -> httpx.Response:
-        nonlocal captured_request
-        captured_request = request
+    with pytest.raises(
+        ValueError,
+        match="Could not find",
+    ):
+        extract_antiforgery_token(html)
 
-        return httpx.Response(
-            200,
-            request=request,
-            json={"PageCount": 1, "Data": []},
-        )
 
-    transport = httpx.MockTransport(handler)
+def test_extract_antiforgery_token_fails_when_empty() -> None:
+    html = """
+    <html>
+        <body>
+            <input
+                name="__RequestVerificationToken"
+                type="hidden"
+                value=""
+            />
+        </body>
+    </html>
+    """
 
-    with httpx.Client(transport=transport) as client:
-        response = fetch_search_page(
-            client,
-            token="token-123",
-            page=2,
-            region="All",
-            search="academy",
-            categories=["Junior High School", "STEM"],
-        )
-
-    assert response.status_code == 200
-    assert captured_request is not None
-    assert str(captured_request.url) == SEARCH_API_URL
-    assert captured_request.headers["content-type"] == "application/x-www-form-urlencoded"
-    assert parse_qsl(captured_request.content.decode()) == [
-        ("__RequestVerificationToken", "token-123"),
-        ("s", "academy"),
-        ("Spara[regS]", "All"),
-        ("Spara[sort]", "0"),
-        ("Spara[page]", "2"),
-        ("Spara[catS][]", "Junior High School"),
-        ("Spara[catS][]", "STEM"),
-    ]
+    with pytest.raises(
+        ValueError,
+        match="has no value",
+    ):
+        extract_antiforgery_token(html)
