@@ -532,6 +532,22 @@ def scrape(
             f"[green]✓[/green] Page {page_number:,}/{total_pages:,} — {record_count} records"
         )
 
+    def on_page_retry(
+        page_number: int,
+        attempt: int,
+        max_attempts: int,
+        retry_delay: float,
+        error: str,
+    ) -> None:
+        console.print(
+            "[yellow]⚠[/yellow] "
+            f"Page {page_number:,} "
+            f"attempt {attempt}/{max_attempts} "
+            f"failed: {error}"
+        )
+
+        console.print(f"  Retrying in {retry_delay:g} seconds...")
+
     try:
         with build_client(verify=not insecure) as client:
             final_crawl = run_directory_crawl(
@@ -542,6 +558,7 @@ def scrape(
                 limit=limit,
                 delay_seconds=delay,
                 on_page_completed=(on_page_completed),
+                on_page_retry=on_page_retry,
             )
 
     except KeyboardInterrupt:

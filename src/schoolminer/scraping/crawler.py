@@ -10,6 +10,8 @@ import httpx
 
 from schoolminer.config import (
     CATEGORY_URL,
+    DEFAULT_MAX_PAGE_ATTEMPTS,
+    DEFAULT_RETRY_BASE_DELAY_SECONDS,
     DETAIL_URL_TEMPLATE,
     JHS_CATEGORY,
     SEARCH_API_URL,
@@ -38,6 +40,11 @@ from schoolminer.storage.sqlite_store import (
 
 PageCompletedCallback = Callable[
     [int, int, int],
+    None,
+]
+
+PageRetryCallback = Callable[
+    [int, int, int, float, str],
     None,
 ]
 
@@ -152,6 +159,45 @@ def _extract_raw_records(
     return data
 
 
+RETRYABLE_HTTP_STATUS_CODES = {
+    408,
+    429,
+    500,
+    502,
+    503,
+    504,
+}
+
+
+def _is_retryable_page_error(
+    error: Exception,
+) -> bool:
+    """Return whether a page request failure may be temporary."""
+
+    if isinstance(
+        error,
+        httpx.TransportError,
+    ):
+        return True
+
+    if isinstance(
+        error,
+        httpx.HTTPStatusError,
+    ):
+        return error.response.status_code in RETRYABLE_HTTP_STATUS_CODES
+
+    return False
+
+
+def _retry_delay(
+    base_delay_seconds: float,
+    failed_attempt: int,
+) -> float:
+    """Calculate exponential retry delay after a failed attempt."""
+
+    return base_delay_seconds * (2 ** (failed_attempt - 1))
+
+
 def run_directory_crawl(
     client: httpx.Client,
     *,
@@ -160,7 +206,10 @@ def run_directory_crawl(
     crawl_id: str,
     limit: int,
     delay_seconds: float = 1.0,
+    max_attempts: int = DEFAULT_MAX_PAGE_ATTEMPTS,
+    retry_base_delay_seconds: float = (DEFAULT_RETRY_BASE_DELAY_SECONDS),
     on_page_completed: Optional[PageCompletedCallback] = None,
+    on_page_retry: Optional[PageRetryCallback] = None,
 ) -> CrawlJob:
     """Run or resume one directory crawl."""
 
@@ -169,6 +218,12 @@ def run_directory_crawl(
 
     if delay_seconds < 0:
         raise ValueError("delay_seconds cannot be negative.")
+
+    if max_attempts < 1:
+        raise ValueError("max_attempts must be at least 1.")
+
+    if retry_base_delay_seconds < 0:
+        raise ValueError("retry_base_delay_seconds cannot be negative.")
 
     crawl = get_crawl_job(
         state_db_path,
@@ -234,89 +289,125 @@ def run_directory_crawl(
 
         page_number = crawl.next_page
 
-        started_at = utc_now()
+        page_records = None
+        search_page = None
 
-        start_crawl_page(
-            state_db_path,
-            crawl_id,
-            page_number,
-            started_at,
-        )
+        for attempt in range(
+            1,
+            max_attempts + 1,
+        ):
+            started_at = utc_now()
 
-        try:
-            response = fetch_search_page(
-                client,
-                token=token,
-                page=page_number,
-                region=crawl.region_filter,
-                categories=[
-                    crawl.category,
-                ],
+            start_crawl_page(
+                state_db_path,
+                crawl_id,
+                page_number,
+                started_at,
             )
 
-            search_page = parse_search_response(response)
+            try:
+                response = fetch_search_page(
+                    client,
+                    token=token,
+                    page=page_number,
+                    region=crawl.region_filter,
+                    categories=[
+                        crawl.category,
+                    ],
+                )
 
-            raw_records = _extract_raw_records(response)
+                search_page = parse_search_response(response)
 
-            if len(raw_records) != len(search_page.records):
-                raise ValueError("Raw and validated record counts do not match.")
+                raw_records = _extract_raw_records(response)
 
-            if crawl.total_pages is None:
-                set_crawl_total_pages(
+                if len(raw_records) != len(search_page.records):
+                    raise ValueError("Raw and validated record counts do not match.")
+
+                if crawl.total_pages is None:
+                    set_crawl_total_pages(
+                        state_db_path,
+                        crawl_id,
+                        search_page.page_count,
+                        utc_now(),
+                    )
+
+                elif crawl.total_pages != search_page.page_count:
+                    raise ValueError(
+                        "Directory PageCount "
+                        "changed from "
+                        f"{crawl.total_pages} "
+                        "to "
+                        f"{search_page.page_count} "
+                        "during this crawl."
+                    )
+
+                fetched_at = utc_now()
+
+                page_records = _build_raw_page_records(
+                    crawl=crawl,
+                    page_number=(page_number),
+                    fetched_at=(fetched_at),
+                    raw_records=(raw_records),
+                )
+
+                output_path = raw_page_path(
+                    raw_dir,
+                    crawl_id,
+                    page_number,
+                )
+
+                write_raw_page(
+                    output_path,
+                    page_records,
+                )
+
+                completed_at = utc_now()
+
+                complete_crawl_page(
                     state_db_path,
                     crawl_id,
-                    search_page.page_count,
+                    page_number,
+                    len(page_records),
+                    completed_at,
+                )
+
+                break
+
+            except Exception as exc:
+                can_retry = _is_retryable_page_error(exc) and attempt < max_attempts
+
+                if can_retry:
+                    retry_delay = _retry_delay(
+                        retry_base_delay_seconds,
+                        attempt,
+                    )
+
+                    if on_page_retry is not None:
+                        on_page_retry(
+                            page_number,
+                            attempt,
+                            max_attempts,
+                            retry_delay,
+                            str(exc),
+                        )
+
+                    if retry_delay > 0:
+                        time.sleep(retry_delay)
+
+                    continue
+
+                fail_crawl_page(
+                    state_db_path,
+                    crawl_id,
+                    page_number,
+                    str(exc),
                     utc_now(),
                 )
 
-            elif crawl.total_pages != search_page.page_count:
-                raise ValueError(
-                    "Directory PageCount changed "
-                    f"from {crawl.total_pages} "
-                    f"to {search_page.page_count} "
-                    "during this crawl."
-                )
+                raise
 
-            fetched_at = utc_now()
-
-            page_records = _build_raw_page_records(
-                crawl=crawl,
-                page_number=page_number,
-                fetched_at=fetched_at,
-                raw_records=raw_records,
-            )
-
-            output_path = raw_page_path(
-                raw_dir,
-                crawl_id,
-                page_number,
-            )
-
-            write_raw_page(
-                output_path,
-                page_records,
-            )
-
-            completed_at = utc_now()
-
-            complete_crawl_page(
-                state_db_path,
-                crawl_id,
-                page_number,
-                len(page_records),
-                completed_at,
-            )
-
-        except Exception as exc:
-            fail_crawl_page(
-                state_db_path,
-                crawl_id,
-                page_number,
-                str(exc),
-                utc_now(),
-            )
-
-            raise
+        if page_records is None or search_page is None:
+            raise RuntimeError("Page processing ended without a completed result.")
 
         page_record_count = len(page_records)
 
