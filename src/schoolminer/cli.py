@@ -1,4 +1,8 @@
+from __future__ import annotations
+
 import re
+from datetime import datetime, timezone
+from typing import Optional
 from urllib.parse import urljoin
 
 import httpx
@@ -7,12 +11,26 @@ from bs4 import BeautifulSoup
 from rich.console import Console
 from rich.table import Table
 
-from schoolminer.config import CATEGORY_URL, INSPECTION_DIR, JHS_CATEGORY
+from schoolminer.config import (
+    CATEGORY_URL,
+    INSPECTION_DIR,
+    JHS_CATEGORY,
+    RAW_DIR,
+    STATE_DB_PATH,
+)
 from schoolminer.scraping.client import build_client
+from schoolminer.scraping.crawler import (
+    create_directory_crawl,
+    run_directory_crawl,
+)
 from schoolminer.sources.ghana_education_directory import (
     extract_antiforgery_token,
     fetch_search_page,
     parse_search_response,
+)
+from schoolminer.storage.sqlite_store import (
+    get_crawl_job,
+    update_crawl_status,
 )
 
 app = typer.Typer(
@@ -407,6 +425,216 @@ def inspect_api(
 
     else:
         console.print("[yellow]No records returned.[/yellow]")
+
+
+@app.command("scrape")
+def scrape(
+    limit: int = typer.Option(
+        10,
+        "--limit",
+        min=1,
+        help=(
+            "Minimum number of records to acquire during this run. "
+            "The crawler always stops at a complete page boundary."
+        ),
+    ),
+    resume: Optional[str] = typer.Option(
+        None,
+        "--resume",
+        help="Resume an existing crawl by its crawl ID.",
+    ),
+    region: Optional[str] = typer.Option(
+        None,
+        "--region",
+        help=("Directory region filter for a new crawl. Defaults to All."),
+    ),
+    delay: float = typer.Option(
+        1.0,
+        "--delay",
+        min=0.0,
+        help="Seconds to wait between completed page requests.",
+    ),
+    insecure: bool = typer.Option(
+        False,
+        "--insecure",
+        help=(
+            "Disable TLS certificate verification for the "
+            "directory's currently misconfigured certificate."
+        ),
+    ),
+) -> None:
+    """Start or resume a raw Ghana Education Directory crawl."""
+
+    console.rule("[bold]Ghana Education Directory Crawl[/bold]")
+
+    if insecure:
+        console.print()
+        console.print(
+            "[bold yellow]WARNING: TLS certificate verification is disabled.[/bold yellow]"
+        )
+
+    if resume is not None:
+        if region is not None:
+            console.print()
+            console.print("[bold red]--region cannot be changed when resuming a crawl.[/bold red]")
+
+            raise typer.Exit(code=2)
+
+        crawl = get_crawl_job(
+            STATE_DB_PATH,
+            resume,
+        )
+
+        if crawl is None:
+            console.print()
+            console.print(f"[bold red]Crawl does not exist: {resume}[/bold red]")
+
+            raise typer.Exit(code=1)
+
+        console.print()
+        console.print(f"Resuming crawl: [cyan]{crawl.crawl_id}[/cyan]")
+
+        console.print(f"Category: {crawl.category}")
+
+        console.print(f"Region: {crawl.region_filter}")
+
+        console.print(f"Next page: {crawl.next_page:,}")
+
+        console.print(f"Records already saved: {crawl.records_saved:,}")
+
+    else:
+        selected_region = region if region is not None else "All"
+
+        crawl = create_directory_crawl(
+            STATE_DB_PATH,
+            region_filter=selected_region,
+        )
+
+        console.print()
+        console.print(f"Created crawl: [cyan]{crawl.crawl_id}[/cyan]")
+
+        console.print(f"Category: {crawl.category}")
+
+        console.print(f"Region: {crawl.region_filter}")
+
+    console.print(f"Run limit: {limit:,} records minimum")
+
+    console.print(f"Page delay: {delay:g} seconds")
+
+    console.print()
+
+    def on_page_completed(
+        page_number: int,
+        total_pages: int,
+        record_count: int,
+    ) -> None:
+        console.print(
+            f"[green]✓[/green] Page {page_number:,}/{total_pages:,} — {record_count} records"
+        )
+
+    try:
+        with build_client(verify=not insecure) as client:
+            final_crawl = run_directory_crawl(
+                client,
+                state_db_path=STATE_DB_PATH,
+                raw_dir=RAW_DIR,
+                crawl_id=crawl.crawl_id,
+                limit=limit,
+                delay_seconds=delay,
+                on_page_completed=(on_page_completed),
+            )
+
+    except KeyboardInterrupt:
+        update_crawl_status(
+            STATE_DB_PATH,
+            crawl.crawl_id,
+            "PAUSED",
+            datetime.now(timezone.utc),
+        )
+
+        paused_crawl = get_crawl_job(
+            STATE_DB_PATH,
+            crawl.crawl_id,
+        )
+
+        console.print()
+        console.print("[yellow]Crawl interrupted and paused.[/yellow]")
+
+        if paused_crawl is not None:
+            console.print(f"Next page: {paused_crawl.next_page:,}")
+
+        console.print()
+        console.print("Resume with:")
+
+        console.print(
+            "[cyan]"
+            "schoolminer scrape "
+            f"--resume {crawl.crawl_id} "
+            f"--limit {limit}" + (" --insecure" if insecure else "") + "[/cyan]"
+        )
+
+        raise typer.Exit(code=130)
+
+    except Exception as exc:
+        failed_crawl = get_crawl_job(
+            STATE_DB_PATH,
+            crawl.crawl_id,
+        )
+
+        console.print()
+        console.print(f"[bold red]Crawl failed: {exc}[/bold red]")
+
+        if failed_crawl is not None:
+            console.print(f"Crawl ID: {failed_crawl.crawl_id}")
+
+            console.print(f"Next page: {failed_crawl.next_page:,}")
+
+            console.print()
+            console.print("Retry with:")
+
+            console.print(
+                "[cyan]"
+                "schoolminer scrape "
+                f"--resume {failed_crawl.crawl_id} "
+                f"--limit {limit}" + (" --insecure" if insecure else "") + "[/cyan]"
+            )
+
+        raise typer.Exit(code=1) from exc
+
+    console.print()
+
+    if final_crawl.status == "COMPLETED":
+        console.print("[bold green]Crawl completed.[/bold green]")
+
+    elif final_crawl.status == "PAUSED":
+        console.print("[bold yellow]Crawl paused at the requested run limit.[/bold yellow]")
+
+    else:
+        console.print(f"Crawl status: {final_crawl.status}")
+
+    console.print(f"Crawl ID: [cyan]{final_crawl.crawl_id}[/cyan]")
+
+    console.print(f"Records saved: {final_crawl.records_saved:,}")
+
+    console.print(f"Next page: {final_crawl.next_page:,}")
+
+    if final_crawl.total_pages is not None:
+        console.print(f"Total pages: {final_crawl.total_pages:,}")
+
+    raw_crawl_dir = RAW_DIR / "crawls" / final_crawl.crawl_id
+
+    console.print(f"Raw data: {raw_crawl_dir}")
+
+    if final_crawl.status == "PAUSED":
+        console.print()
+        console.print("Resume with:")
+
+        console.print(
+            "[cyan]"
+            "schoolminer scrape "
+            f"--resume {final_crawl.crawl_id} "
+            f"--limit {limit}" + (" --insecure" if insecure else "") + "[/cyan]"
+        )
 
 
 if __name__ == "__main__":
