@@ -374,8 +374,11 @@ def test_crawl_does_not_retry_bad_request(
 
     transport = httpx.MockTransport(handler)
 
-    with httpx.Client(transport=transport) as client, pytest.raises(
-        httpx.HTTPStatusError,
+    with (
+        httpx.Client(transport=transport) as client,
+        pytest.raises(
+            httpx.HTTPStatusError,
+        ),
     ):
         run_directory_crawl(
             client,
@@ -457,8 +460,11 @@ def test_crawl_fails_after_retry_limit(
 
     transport = httpx.MockTransport(handler)
 
-    with httpx.Client(transport=transport) as client, pytest.raises(
-        httpx.HTTPStatusError,
+    with (
+        httpx.Client(transport=transport) as client,
+        pytest.raises(
+            httpx.HTTPStatusError,
+        ),
     ):
         run_directory_crawl(
             client,
