@@ -1,13 +1,20 @@
 import json
 from datetime import datetime, timezone
 
+import pytest
+
 from schoolminer.models.raw import RawDirectoryRecord
-from schoolminer.storage.raw_store import append_raw_record
+from schoolminer.storage.raw_store import (
+    append_raw_record,
+    raw_page_path,
+    write_raw_page,
+)
 
 
 def build_raw_record(
     *,
     source_detail_id: str = "1109",
+    page: int = 1,
     position: int = 1,
 ) -> RawDirectoryRecord:
     return RawDirectoryRecord(
@@ -15,7 +22,7 @@ def build_raw_record(
         source="ghana_education_directory",
         category="Junior High School",
         region_filter="All",
-        page=1,
+        page=page,
         position=position,
         fetched_at=datetime(
             2026,
@@ -115,3 +122,126 @@ def test_append_raw_record_preserves_existing_lines(
     assert first_payload["source_detail_id"] == "1109"
 
     assert second_payload["source_detail_id"] == "9543"
+
+
+def test_raw_page_path_is_deterministic(
+    tmp_path,
+) -> None:
+    path = raw_page_path(
+        tmp_path,
+        "jhs-test-abc123",
+        42,
+    )
+
+    assert path == (tmp_path / "crawls" / "jhs-test-abc123" / "pages" / "page-00042.jsonl")
+
+
+def test_write_raw_page_writes_complete_jsonl(
+    tmp_path,
+) -> None:
+    output_path = tmp_path / "page-00001.jsonl"
+
+    records = [
+        build_raw_record(
+            source_detail_id="1109",
+            page=1,
+            position=1,
+        ),
+        build_raw_record(
+            source_detail_id="9543",
+            page=1,
+            position=2,
+        ),
+    ]
+
+    write_raw_page(
+        output_path,
+        records,
+    )
+
+    lines = output_path.read_text(encoding="utf-8").splitlines()
+
+    assert len(lines) == 2
+
+    first_payload = json.loads(lines[0])
+
+    second_payload = json.loads(lines[1])
+
+    assert first_payload["source_detail_id"] == "1109"
+
+    assert second_payload["source_detail_id"] == "9543"
+
+
+def test_write_raw_page_replaces_previous_attempt(
+    tmp_path,
+) -> None:
+    output_path = tmp_path / "page-00001.jsonl"
+
+    first_attempt = [
+        build_raw_record(
+            source_detail_id="1109",
+            page=1,
+            position=1,
+        ),
+        build_raw_record(
+            source_detail_id="9543",
+            page=1,
+            position=2,
+        ),
+    ]
+
+    write_raw_page(
+        output_path,
+        first_attempt,
+    )
+
+    retry_attempt = [
+        build_raw_record(
+            source_detail_id="9730",
+            page=1,
+            position=1,
+        ),
+    ]
+
+    write_raw_page(
+        output_path,
+        retry_attempt,
+    )
+
+    lines = output_path.read_text(encoding="utf-8").splitlines()
+
+    assert len(lines) == 1
+
+    payload = json.loads(lines[0])
+
+    assert payload["source_detail_id"] == "9730"
+
+
+def test_write_raw_page_rejects_mixed_pages(
+    tmp_path,
+) -> None:
+    output_path = tmp_path / "page.jsonl"
+
+    records = [
+        build_raw_record(
+            source_detail_id="1109",
+            page=1,
+            position=1,
+        ),
+        build_raw_record(
+            source_detail_id="5213",
+            page=2,
+            position=1,
+        ),
+    ]
+
+    with pytest.raises(
+        ValueError,
+        match="same crawl and page",
+    ):
+        write_raw_page(
+            output_path,
+            records,
+        )
+
+    assert not output_path.exists()
