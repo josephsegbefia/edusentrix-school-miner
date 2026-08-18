@@ -9,6 +9,8 @@ from pydantic import ValidationError
 from schoolminer.config import JHS_CATEGORY, SEARCH_API_URL
 from schoolminer.models.directory import DirectorySearchPage
 
+SOURCE_NAME = "ghana_education_directory"
+
 
 def extract_antiforgery_token(html: str) -> str:
     """Extract the ASP.NET request verification token from category HTML."""
