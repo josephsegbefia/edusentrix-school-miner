@@ -1,10 +1,15 @@
 from __future__ import annotations
 
 import sqlite3
+from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-from schoolminer.models.crawl import CrawlJob
+from schoolminer.models.crawl import (
+    CrawlJob,
+    CrawlPage,
+    CrawlStatus,
+)
 
 
 def _connect(
@@ -218,3 +223,397 @@ def get_crawl_job(
         return None
 
     return CrawlJob.model_validate(dict(row))
+
+
+def update_crawl_status(
+    path: Path,
+    crawl_id: str,
+    status: CrawlStatus,
+    updated_at: datetime,
+    *,
+    last_error: Optional[str] = None,
+) -> None:
+    """Update the lifecycle status of an existing crawl."""
+
+    initialize_database(path)
+
+    connection = _connect(path)
+
+    try:
+        cursor = connection.execute(
+            """
+            UPDATE crawl_jobs
+            SET
+                status = ?,
+                updated_at = ?,
+                last_error = ?
+            WHERE crawl_id = ?
+            """,
+            (
+                status,
+                updated_at.isoformat(),
+                last_error,
+                crawl_id,
+            ),
+        )
+
+        if cursor.rowcount != 1:
+            raise ValueError(f"Crawl job does not exist: {crawl_id}")
+
+        connection.commit()
+
+    finally:
+        connection.close()
+
+
+def set_crawl_total_pages(
+    path: Path,
+    crawl_id: str,
+    total_pages: int,
+    updated_at: datetime,
+) -> None:
+    """Store the source-reported page count for a crawl."""
+
+    if total_pages < 1:
+        raise ValueError("total_pages must be at least 1.")
+
+    initialize_database(path)
+
+    connection = _connect(path)
+
+    try:
+        cursor = connection.execute(
+            """
+            UPDATE crawl_jobs
+            SET
+                total_pages = ?,
+                updated_at = ?
+            WHERE crawl_id = ?
+            """,
+            (
+                total_pages,
+                updated_at.isoformat(),
+                crawl_id,
+            ),
+        )
+
+        if cursor.rowcount != 1:
+            raise ValueError(f"Crawl job does not exist: {crawl_id}")
+
+        connection.commit()
+
+    finally:
+        connection.close()
+
+
+def get_crawl_page(
+    path: Path,
+    crawl_id: str,
+    page_number: int,
+) -> Optional[CrawlPage]:
+    """Load one page checkpoint from the state database."""
+
+    initialize_database(path)
+
+    connection = _connect(path)
+
+    try:
+        row = connection.execute(
+            """
+            SELECT
+                crawl_id,
+                page_number,
+                status,
+                attempts,
+                records_saved,
+                started_at,
+                completed_at,
+                last_error
+            FROM crawl_pages
+            WHERE
+                crawl_id = ?
+                AND page_number = ?
+            """,
+            (
+                crawl_id,
+                page_number,
+            ),
+        ).fetchone()
+
+    finally:
+        connection.close()
+
+    if row is None:
+        return None
+
+    return CrawlPage.model_validate(dict(row))
+
+
+def start_crawl_page(
+    path: Path,
+    crawl_id: str,
+    page_number: int,
+    started_at: datetime,
+) -> None:
+    """Mark the crawl's next page as in progress."""
+
+    initialize_database(path)
+
+    connection = _connect(path)
+
+    try:
+        job = connection.execute(
+            """
+            SELECT
+                status,
+                next_page
+            FROM crawl_jobs
+            WHERE crawl_id = ?
+            """,
+            (crawl_id,),
+        ).fetchone()
+
+        if job is None:
+            raise ValueError(f"Crawl job does not exist: {crawl_id}")
+
+        if job["status"] != "RUNNING":
+            raise ValueError("A page can only start while the crawl is RUNNING.")
+
+        if job["next_page"] != page_number:
+            raise ValueError(f"Cannot start page {page_number}; next page is {job['next_page']}.")
+
+        existing_page = connection.execute(
+            """
+            SELECT
+                status,
+                attempts
+            FROM crawl_pages
+            WHERE
+                crawl_id = ?
+                AND page_number = ?
+            """,
+            (
+                crawl_id,
+                page_number,
+            ),
+        ).fetchone()
+
+        if existing_page is None:
+            connection.execute(
+                """
+                INSERT INTO crawl_pages (
+                    crawl_id,
+                    page_number,
+                    status,
+                    attempts,
+                    records_saved,
+                    started_at,
+                    completed_at,
+                    last_error
+                )
+                VALUES (
+                    ?,
+                    ?,
+                    'IN_PROGRESS',
+                    1,
+                    0,
+                    ?,
+                    NULL,
+                    NULL
+                )
+                """,
+                (
+                    crawl_id,
+                    page_number,
+                    started_at.isoformat(),
+                ),
+            )
+
+        else:
+            if existing_page["status"] == "COMPLETED":
+                raise ValueError(f"Page {page_number} is already completed.")
+
+            connection.execute(
+                """
+                UPDATE crawl_pages
+                SET
+                    status = 'IN_PROGRESS',
+                    attempts = attempts + 1,
+                    started_at = ?,
+                    completed_at = NULL,
+                    last_error = NULL
+                WHERE
+                    crawl_id = ?
+                    AND page_number = ?
+                """,
+                (
+                    started_at.isoformat(),
+                    crawl_id,
+                    page_number,
+                ),
+            )
+
+        connection.execute(
+            """
+            UPDATE crawl_jobs
+            SET
+                updated_at = ?,
+                last_error = NULL
+            WHERE crawl_id = ?
+            """,
+            (
+                started_at.isoformat(),
+                crawl_id,
+            ),
+        )
+
+        connection.commit()
+
+    finally:
+        connection.close()
+
+
+def complete_crawl_page(
+    path: Path,
+    crawl_id: str,
+    page_number: int,
+    records_saved: int,
+    completed_at: datetime,
+) -> None:
+    """Complete a page and atomically advance the crawl."""
+
+    if records_saved < 0:
+        raise ValueError("records_saved cannot be negative.")
+
+    initialize_database(path)
+
+    connection = _connect(path)
+
+    try:
+        page = connection.execute(
+            """
+            SELECT status
+            FROM crawl_pages
+            WHERE
+                crawl_id = ?
+                AND page_number = ?
+            """,
+            (
+                crawl_id,
+                page_number,
+            ),
+        ).fetchone()
+
+        if page is None:
+            raise ValueError(f"Page {page_number} has not been started.")
+
+        if page["status"] != "IN_PROGRESS":
+            raise ValueError(f"Page {page_number} is not currently in progress.")
+
+        connection.execute(
+            """
+            UPDATE crawl_pages
+            SET
+                status = 'COMPLETED',
+                records_saved = ?,
+                completed_at = ?,
+                last_error = NULL
+            WHERE
+                crawl_id = ?
+                AND page_number = ?
+            """,
+            (
+                records_saved,
+                completed_at.isoformat(),
+                crawl_id,
+                page_number,
+            ),
+        )
+
+        cursor = connection.execute(
+            """
+            UPDATE crawl_jobs
+            SET
+                next_page = next_page + 1,
+                records_saved = (
+                    records_saved + ?
+                ),
+                updated_at = ?,
+                last_error = NULL
+            WHERE
+                crawl_id = ?
+                AND next_page = ?
+            """,
+            (
+                records_saved,
+                completed_at.isoformat(),
+                crawl_id,
+                page_number,
+            ),
+        )
+
+        if cursor.rowcount != 1:
+            connection.rollback()
+
+            raise ValueError("Crawl checkpoint no longer matches the page being completed.")
+
+        connection.commit()
+
+    finally:
+        connection.close()
+
+
+def fail_crawl_page(
+    path: Path,
+    crawl_id: str,
+    page_number: int,
+    error: str,
+    failed_at: datetime,
+) -> None:
+    """Record a page failure without advancing the crawl."""
+
+    initialize_database(path)
+
+    connection = _connect(path)
+
+    try:
+        cursor = connection.execute(
+            """
+            UPDATE crawl_pages
+            SET
+                status = 'FAILED',
+                last_error = ?
+            WHERE
+                crawl_id = ?
+                AND page_number = ?
+            """,
+            (
+                error,
+                crawl_id,
+                page_number,
+            ),
+        )
+
+        if cursor.rowcount != 1:
+            raise ValueError(f"Page {page_number} has not been started.")
+
+        connection.execute(
+            """
+            UPDATE crawl_jobs
+            SET
+                status = 'FAILED',
+                updated_at = ?,
+                last_error = ?
+            WHERE crawl_id = ?
+            """,
+            (
+                failed_at.isoformat(),
+                error,
+                crawl_id,
+            ),
+        )
+
+        connection.commit()
+
+    finally:
+        connection.close()
