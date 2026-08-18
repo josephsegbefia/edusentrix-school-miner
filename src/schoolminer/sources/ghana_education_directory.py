@@ -4,8 +4,10 @@ from urllib.parse import urlencode
 
 import httpx
 from bs4 import BeautifulSoup
+from pydantic import ValidationError
 
 from schoolminer.config import JHS_CATEGORY, SEARCH_API_URL
+from schoolminer.models.directory import DirectorySearchPage
 
 
 def extract_antiforgery_token(html: str) -> str:
@@ -84,3 +86,22 @@ def fetch_search_page(
             "content-type": "application/x-www-form-urlencoded",
         },
     )
+
+
+def parse_search_response(response: httpx.Response) -> DirectorySearchPage:
+    """Validate a directory search response into a typed model."""
+
+    response.raise_for_status()
+
+    try:
+        payload = response.json()
+    except ValueError as exc:
+        raise ValueError("Directory search endpoint did not return valid JSON.") from exc
+
+    if not isinstance(payload, dict):
+        raise TypeError("Directory search endpoint did not return a JSON object.")
+
+    try:
+        return DirectorySearchPage.model_validate(payload)
+    except ValidationError as exc:
+        raise ValueError("Directory search response did not match the expected schema.") from exc
