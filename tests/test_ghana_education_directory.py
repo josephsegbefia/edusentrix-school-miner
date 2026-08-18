@@ -98,14 +98,9 @@ def test_fetch_search_page_builds_expected_form_payload() -> None:
 
     assert captured_request["method"] == "POST"
 
-    assert captured_request["url"].endswith(
-        "/search/searchs"
-    )
+    assert captured_request["url"].endswith("/search/searchs")
 
-    assert (
-        captured_request["content_type"]
-        == "application/x-www-form-urlencoded"
-    )
+    assert captured_request["content_type"] == "application/x-www-form-urlencoded"
 
     form_data = parse_qs(
         captured_request["body"],
@@ -133,7 +128,7 @@ def test_fetch_search_page_builds_expected_form_payload() -> None:
         ],
     }
 
-    
+
 def test_parse_search_response_returns_typed_model() -> None:
     request = httpx.Request(
         "POST",

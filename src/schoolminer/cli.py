@@ -12,6 +12,7 @@ from schoolminer.scraping.client import build_client
 from schoolminer.sources.ghana_education_directory import (
     extract_antiforgery_token,
     fetch_search_page,
+    parse_search_response,
 )
 
 app = typer.Typer(
@@ -295,7 +296,7 @@ def inspect_api(
                 page=page,
                 region=region,
             )
-            search_response.raise_for_status()
+            search_page = parse_search_response(search_response)
 
             if debug:
                 console.print()
@@ -340,77 +341,72 @@ def inspect_api(
     console.print(f"Response characters: {len(search_response.text):,}")
     console.print()
 
-    try:
-        payload = search_response.json()
-    except ValueError as exc:
-        console.print("[bold red]Search endpoint did not return valid JSON[/bold red]")
+    console.print("[green]Response validated successfully.[/green]")
 
+    console.print(f"PageCount: {search_page.page_count:,}")
+
+    console.print(f"Records returned: {len(search_page.records)}")
+
+    if search_page.records:
         console.print()
-        console.print(search_response.text[:2000])
+        table = Table(title=f"Search results - page {page}")
 
-        raise typer.Exit(code=1) from exc
+        table.add_column(
+            "ID",
+            justify="right",
+        )
 
-    console.print("[green]Valid JSON response received.[/green]")
+        table.add_column("School")
+        table.add_column("Region")
+        table.add_column("Town")
+        table.add_column("Phone")
+        table.add_column("Ownership")
 
-    if not isinstance(payload, dict):
-        console.print(f"[yellow]Expected a JSON object, got {type(payload).__name__}.[/yellow]")
-        raise typer.Exit(code=1)
+        for record in search_page.records:
+            if record.ownership_id == 1:
+                ownership = "Private"
 
-    console.print(f"Top-level keys: {list(payload.keys())}")
+            elif record.ownership_id == 2:
+                ownership = "Public"
 
-    page_count = payload.get("PageCount")
-    records = payload.get("Data")
-
-    console.print(f"PageCount: {page_count!r}")
-
-    if isinstance(records, list):
-        console.print(f"Records returned: {len(records)}")
-
-        if records:
-            console.print()
-
-            table = Table(title=f"Search results - page {page}")
-
-            table.add_column(
-                "ID",
-                justify="right",
-            )
-            table.add_column("School")
-            table.add_column("Region")
-            table.add_column("Town")
-            table.add_column("Phone")
-            table.add_column("Ownership")
-
-            for record in records:
-                ownership_id = record.get("OwnerShipId")
-
-                if ownership_id == 1:
-                    ownership = "Private"
-                elif ownership_id == 2:
-                    ownership = "Public"
-                else:
-                    ownership = str(ownership_id)
-
-                table.add_row(
-                    str(record.get("InstitutionId", "")),
-                    str(record.get("InstitutionName", "")),
-                    str(record.get("Region", "")),
-                    str(record.get("TownName", "")),
-                    str(record.get("Phone", "")),
-                    ownership,
+            else:
+                ownership = (
+                    str(record.ownership_id) if record.ownership_id is not None else "Unknown"
                 )
 
-            console.print(table)
+            table.add_row(
+                str(record.institution_id),
+                record.institution_name,
+                record.region or "",
+                record.town_name or "",
+                record.phone_raw or "",
+                ownership,
+            )
 
-            console.print()
-            console.print("[bold]Raw fields in first record[/bold]")
+        console.print(table)
 
-            first_record = records[0]
+        console.print()
 
-            for key, value in first_record.items():
-                console.print(f"{key}: {value!r}")
+        console.print("[bold]Validated first record[/bold]")
+
+        first_record = search_page.records[0]
+
+        console.print(f"Institution ID: {first_record.institution_id!r}")
+
+        console.print(f"Institution name: {first_record.institution_name!r}")
+
+        console.print(f"Town: {first_record.town_name!r}")
+
+        console.print(f"Region: {first_record.region!r}")
+
+        console.print(f"Phone raw: {first_record.phone_raw!r}")
+
+        console.print(f"Ownership ID: {first_record.ownership_id!r}")
+
+        console.print(f"Logo raw: {first_record.logo_raw!r}")
+
     else:
-        console.print("[yellow]Data is not a list or is missing.[/yellow]")
+        console.print("[yellow]No records returned.[/yellow]")
 
 
 if __name__ == "__main__":
