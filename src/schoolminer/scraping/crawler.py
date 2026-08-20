@@ -37,6 +37,10 @@ from schoolminer.storage.sqlite_store import (
     start_crawl_page,
     update_crawl_status,
 )
+from schoolminer.scraping.retry import (
+    is_retryable_http_error,
+    retry_delay,
+)
 
 PageCompletedCallback = Callable[
     [int, int, int],
@@ -159,43 +163,43 @@ def _extract_raw_records(
     return data
 
 
-RETRYABLE_HTTP_STATUS_CODES = {
-    408,
-    429,
-    500,
-    502,
-    503,
-    504,
-}
+# RETRYABLE_HTTP_STATUS_CODES = {
+#     408,
+#     429,
+#     500,
+#     502,
+#     503,
+#     504,
+# }
 
 
-def _is_retryable_page_error(
-    error: Exception,
-) -> bool:
-    """Return whether a page request failure may be temporary."""
+# def _is_retryable_page_error(
+#     error: Exception,
+# ) -> bool:
+#     """Return whether a page request failure may be temporary."""
 
-    if isinstance(
-        error,
-        httpx.TransportError,
-    ):
-        return True
+#     if isinstance(
+#         error,
+#         httpx.TransportError,
+#     ):
+#         return True
 
-    if isinstance(
-        error,
-        httpx.HTTPStatusError,
-    ):
-        return error.response.status_code in RETRYABLE_HTTP_STATUS_CODES
+#     if isinstance(
+#         error,
+#         httpx.HTTPStatusError,
+#     ):
+#         return error.response.status_code in RETRYABLE_HTTP_STATUS_CODES
 
-    return False
+#     return False
 
 
-def _retry_delay(
-    base_delay_seconds: float,
-    failed_attempt: int,
-) -> float:
-    """Calculate exponential retry delay after a failed attempt."""
+# def _retry_delay(
+#     base_delay_seconds: float,
+#     failed_attempt: int,
+# ) -> float:
+#     """Calculate exponential retry delay after a failed attempt."""
 
-    return base_delay_seconds * (2 ** (failed_attempt - 1))
+#     return base_delay_seconds * (2 ** (failed_attempt - 1))
 
 
 def run_directory_crawl(
@@ -374,10 +378,10 @@ def run_directory_crawl(
                 break
 
             except Exception as exc:
-                can_retry = _is_retryable_page_error(exc) and attempt < max_attempts
+                can_retry = is_retryable_http_error(exc) and attempt < max_attempts
 
                 if can_retry:
-                    retry_delay = _retry_delay(
+                    delay = retry_delay(
                         retry_base_delay_seconds,
                         attempt,
                     )
@@ -387,12 +391,12 @@ def run_directory_crawl(
                             page_number,
                             attempt,
                             max_attempts,
-                            retry_delay,
+                            delay,
                             str(exc),
                         )
 
-                    if retry_delay > 0:
-                        time.sleep(retry_delay)
+                    if delay > 0:
+                        time.sleep(delay)
 
                     continue
 

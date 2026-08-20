@@ -604,4 +604,3 @@ def test_completed_detail_fetch_cannot_restart(
             "1109",
             job.updated_at,
         )
-
