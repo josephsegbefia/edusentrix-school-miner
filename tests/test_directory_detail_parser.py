@@ -1,7 +1,4 @@
-from schoolminer.sources.ghana_education_directory import (
-    parse_detail_page,
-)
-
+from schoolminer.sources.ghana_education_directory import parse_detail_page
 
 DETAIL_HTML = """
 <html>

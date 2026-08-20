@@ -21,6 +21,42 @@ PageStatus = Literal[
     "FAILED",
 ]
 
+DetailFetchStatus = Literal[
+    "IN_PROGRESS",
+    "COMPLETED",
+    "FAILED",
+]
+
+
+class DetailFetch(BaseModel):
+    """Checkpoint state for one school detail-page acquisition."""
+
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+
+    crawl_id: str
+    source_detail_id: str
+
+    status: DetailFetchStatus
+
+    attempts: int = Field(
+        default=0,
+        ge=0,
+    )
+
+    started_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
+
+    http_status: Optional[int] = None
+
+    content_length: Optional[int] = Field(
+        default=None,
+        ge=0,
+    )
+
+    last_error: Optional[str] = None
+
 
 class CrawlJob(BaseModel):
     """Persistent state for one crawl of a directory source."""

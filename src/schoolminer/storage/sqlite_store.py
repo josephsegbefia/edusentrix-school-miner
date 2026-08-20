@@ -9,6 +9,7 @@ from schoolminer.models.crawl import (
     CrawlJob,
     CrawlPage,
     CrawlStatus,
+    DetailFetch,
 )
 
 
@@ -105,6 +106,48 @@ def initialize_database(
                 PRIMARY KEY (
                     crawl_id,
                     page_number
+                ),
+
+                FOREIGN KEY (
+                    crawl_id
+                )
+                REFERENCES crawl_jobs (
+                    crawl_id
+                )
+                ON DELETE CASCADE
+            );
+            
+            CREATE TABLE IF NOT EXISTS detail_fetches (
+                crawl_id TEXT NOT NULL,
+                source_detail_id TEXT NOT NULL,
+
+                status TEXT NOT NULL
+                    CHECK (
+                        status IN (
+                            'IN_PROGRESS',
+                            'COMPLETED',
+                            'FAILED'
+                        )
+                    ),
+
+                attempts INTEGER NOT NULL DEFAULT 0
+                    CHECK (attempts >= 0),
+
+                started_at TEXT,
+                completed_at TEXT,
+
+                http_status INTEGER,
+                content_length INTEGER
+                    CHECK (
+                        content_length IS NULL
+                        OR content_length >= 0
+                    ),
+
+                last_error TEXT,
+
+                PRIMARY KEY (
+                    crawl_id,
+                    source_detail_id
                 ),
 
                 FOREIGN KEY (
@@ -612,6 +655,250 @@ def fail_crawl_page(
                 crawl_id,
             ),
         )
+
+        connection.commit()
+
+    finally:
+        connection.close()
+
+
+def get_detail_fetch(
+    path: Path,
+    crawl_id: str,
+    source_detail_id: str,
+) -> Optional[DetailFetch]:
+    """Load one detail-page acquisition checkpoint."""
+
+    initialize_database(path)
+
+    connection = _connect(path)
+
+    try:
+        row = connection.execute(
+            """
+            SELECT
+                crawl_id,
+                source_detail_id,
+                status,
+                attempts,
+                started_at,
+                completed_at,
+                http_status,
+                content_length,
+                last_error
+            FROM detail_fetches
+            WHERE
+                crawl_id = ?
+                AND source_detail_id = ?
+            """,
+            (
+                crawl_id,
+                source_detail_id,
+            ),
+        ).fetchone()
+
+    finally:
+        connection.close()
+
+    if row is None:
+        return None
+
+    return DetailFetch.model_validate(dict(row))
+
+
+def start_detail_fetch(
+    path: Path,
+    crawl_id: str,
+    source_detail_id: str,
+    started_at: datetime,
+) -> None:
+    """Start or retry one school detail-page acquisition."""
+
+    initialize_database(path)
+
+    connection = _connect(path)
+
+    try:
+        crawl = connection.execute(
+            """
+            SELECT crawl_id
+            FROM crawl_jobs
+            WHERE crawl_id = ?
+            """,
+            (crawl_id,),
+        ).fetchone()
+
+        if crawl is None:
+            raise ValueError(f"Crawl job does not exist: {crawl_id}")
+
+        existing = connection.execute(
+            """
+            SELECT
+                status,
+                attempts
+            FROM detail_fetches
+            WHERE
+                crawl_id = ?
+                AND source_detail_id = ?
+            """,
+            (
+                crawl_id,
+                source_detail_id,
+            ),
+        ).fetchone()
+
+        if existing is None:
+            connection.execute(
+                """
+                INSERT INTO detail_fetches (
+                    crawl_id,
+                    source_detail_id,
+                    status,
+                    attempts,
+                    started_at,
+                    completed_at,
+                    http_status,
+                    content_length,
+                    last_error
+                )
+                VALUES (
+                    ?,
+                    ?,
+                    'IN_PROGRESS',
+                    1,
+                    ?,
+                    NULL,
+                    NULL,
+                    NULL,
+                    NULL
+                )
+                """,
+                (
+                    crawl_id,
+                    source_detail_id,
+                    started_at.isoformat(),
+                ),
+            )
+
+        else:
+            if existing["status"] == "COMPLETED":
+                raise ValueError(
+                    f"Detail page is already completed for source ID {source_detail_id}."
+                )
+
+            connection.execute(
+                """
+                UPDATE detail_fetches
+                SET
+                    status = 'IN_PROGRESS',
+                    attempts = attempts + 1,
+                    started_at = ?,
+                    completed_at = NULL,
+                    http_status = NULL,
+                    content_length = NULL,
+                    last_error = NULL
+                WHERE
+                    crawl_id = ?
+                    AND source_detail_id = ?
+                """,
+                (
+                    started_at.isoformat(),
+                    crawl_id,
+                    source_detail_id,
+                ),
+            )
+
+        connection.commit()
+
+    finally:
+        connection.close()
+
+
+def complete_detail_fetch(
+    path: Path,
+    crawl_id: str,
+    source_detail_id: str,
+    *,
+    http_status: int,
+    content_length: int,
+    completed_at: datetime,
+) -> None:
+    """Mark one persisted detail page as completed."""
+
+    if content_length < 0:
+        raise ValueError("content_length cannot be negative.")
+
+    initialize_database(path)
+
+    connection = _connect(path)
+
+    try:
+        cursor = connection.execute(
+            """
+            UPDATE detail_fetches
+            SET
+                status = 'COMPLETED',
+                completed_at = ?,
+                http_status = ?,
+                content_length = ?,
+                last_error = NULL
+            WHERE
+                crawl_id = ?
+                AND source_detail_id = ?
+                AND status = 'IN_PROGRESS'
+            """,
+            (
+                completed_at.isoformat(),
+                http_status,
+                content_length,
+                crawl_id,
+                source_detail_id,
+            ),
+        )
+
+        if cursor.rowcount != 1:
+            raise ValueError(
+                f"Detail fetch is not currently in progress for source ID {source_detail_id}."
+            )
+
+        connection.commit()
+
+    finally:
+        connection.close()
+
+
+def fail_detail_fetch(
+    path: Path,
+    crawl_id: str,
+    source_detail_id: str,
+    error: str,
+) -> None:
+    """Mark one detail-page acquisition as failed."""
+
+    initialize_database(path)
+
+    connection = _connect(path)
+
+    try:
+        cursor = connection.execute(
+            """
+            UPDATE detail_fetches
+            SET
+                status = 'FAILED',
+                last_error = ?
+            WHERE
+                crawl_id = ?
+                AND source_detail_id = ?
+            """,
+            (
+                error,
+                crawl_id,
+                source_detail_id,
+            ),
+        )
+
+        if cursor.rowcount != 1:
+            raise ValueError(f"Detail fetch has not been started for source ID {source_detail_id}.")
 
         connection.commit()
 

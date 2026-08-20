@@ -6,13 +6,17 @@ import pytest
 from schoolminer.models.crawl import CrawlJob
 from schoolminer.storage.sqlite_store import (
     complete_crawl_page,
+    complete_detail_fetch,
     create_crawl_job,
     fail_crawl_page,
+    fail_detail_fetch,
     get_crawl_job,
     get_crawl_page,
+    get_detail_fetch,
     initialize_database,
     set_crawl_total_pages,
     start_crawl_page,
+    start_detail_fetch,
     update_crawl_status,
 )
 
@@ -456,3 +460,148 @@ def test_completed_page_cannot_be_counted_twice(
     assert loaded_job is not None
 
     assert loaded_job.records_saved == 5
+
+
+def test_detail_fetch_can_start_and_complete(
+    tmp_path,
+) -> None:
+    database_path = tmp_path / "schoolminer.sqlite3"
+
+    job = build_crawl_job()
+
+    create_crawl_job(
+        database_path,
+        job,
+    )
+
+    start_detail_fetch(
+        database_path,
+        job.crawl_id,
+        "1109",
+        job.updated_at,
+    )
+
+    started = get_detail_fetch(
+        database_path,
+        job.crawl_id,
+        "1109",
+    )
+
+    assert started is not None
+    assert started.status == "IN_PROGRESS"
+    assert started.attempts == 1
+
+    complete_detail_fetch(
+        database_path,
+        job.crawl_id,
+        "1109",
+        http_status=200,
+        content_length=29256,
+        completed_at=job.updated_at,
+    )
+
+    completed = get_detail_fetch(
+        database_path,
+        job.crawl_id,
+        "1109",
+    )
+
+    assert completed is not None
+    assert completed.status == "COMPLETED"
+    assert completed.http_status == 200
+    assert completed.content_length == 29256
+
+
+def test_failed_detail_fetch_can_retry(
+    tmp_path,
+) -> None:
+    database_path = tmp_path / "schoolminer.sqlite3"
+
+    job = build_crawl_job()
+
+    create_crawl_job(
+        database_path,
+        job,
+    )
+
+    start_detail_fetch(
+        database_path,
+        job.crawl_id,
+        "1109",
+        job.updated_at,
+    )
+
+    fail_detail_fetch(
+        database_path,
+        job.crawl_id,
+        "1109",
+        "HTTP 503",
+    )
+
+    failed = get_detail_fetch(
+        database_path,
+        job.crawl_id,
+        "1109",
+    )
+
+    assert failed is not None
+    assert failed.status == "FAILED"
+    assert failed.attempts == 1
+
+    start_detail_fetch(
+        database_path,
+        job.crawl_id,
+        "1109",
+        job.updated_at,
+    )
+
+    retried = get_detail_fetch(
+        database_path,
+        job.crawl_id,
+        "1109",
+    )
+
+    assert retried is not None
+    assert retried.status == "IN_PROGRESS"
+    assert retried.attempts == 2
+
+
+def test_completed_detail_fetch_cannot_restart(
+    tmp_path,
+) -> None:
+    database_path = tmp_path / "schoolminer.sqlite3"
+
+    job = build_crawl_job()
+
+    create_crawl_job(
+        database_path,
+        job,
+    )
+
+    start_detail_fetch(
+        database_path,
+        job.crawl_id,
+        "1109",
+        job.updated_at,
+    )
+
+    complete_detail_fetch(
+        database_path,
+        job.crawl_id,
+        "1109",
+        http_status=200,
+        content_length=100,
+        completed_at=job.updated_at,
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="already completed",
+    ):
+        start_detail_fetch(
+            database_path,
+            job.crawl_id,
+            "1109",
+            job.updated_at,
+        )
+

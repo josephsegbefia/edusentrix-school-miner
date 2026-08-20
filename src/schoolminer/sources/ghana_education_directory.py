@@ -1,11 +1,11 @@
 from __future__ import annotations
 
+from typing import Optional
 from urllib.parse import urlencode
 
 import httpx
 from bs4 import BeautifulSoup
 from pydantic import ValidationError
-from typing import Optional
 
 from schoolminer.config import DETAIL_URL_TEMPLATE, JHS_CATEGORY, SEARCH_API_URL
 from schoolminer.models.directory import DirectorySearchPage

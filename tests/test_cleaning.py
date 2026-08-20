@@ -126,3 +126,10 @@ def test_clean_directory_school_transforms_raw_record() -> None:
     assert school.phones[0].normalized == "+233302773029"
 
     assert school.phones[1].normalized == "+233244826894"
+
+
+def test_bono_without_district_requires_review() -> None:
+    region, status = normalize_region("Bono")
+
+    assert region is None
+    assert status == "NEEDS_REVIEW"

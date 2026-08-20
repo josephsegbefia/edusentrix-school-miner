@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import List, Optional
+from typing import Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -20,7 +20,7 @@ class DirectoryDetail(BaseModel):
     ownership_raw: Optional[str] = None
     gender_raw: Optional[str] = None
 
-    levels_raw: List[str] = Field(default_factory=list)
+    levels_raw: list[str] = Field(default_factory=list)
 
     region_raw: Optional[str] = None
 

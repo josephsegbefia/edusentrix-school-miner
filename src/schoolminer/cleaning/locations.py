@@ -22,8 +22,6 @@ UNAMBIGUOUS_REGION_MAP = {
     "upper east": "Upper East",
     "upper west region": "Upper West",
     "upper west": "Upper West",
-    "bono region": "Bono",
-    "bono": "Bono",
 }
 
 
@@ -33,6 +31,8 @@ AMBIGUOUS_HISTORICAL_REGIONS = {
     "northern region",
     "volta region",
     "western region",
+    "bono region",
+    "bono",
 }
 
 
