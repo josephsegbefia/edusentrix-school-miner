@@ -102,3 +102,58 @@ def write_raw_page(
             temporary_path.unlink(missing_ok=True)
 
         raise
+
+
+def raw_detail_path(
+    raw_dir: Path,
+    crawl_id: str,
+    source_detail_id: str,
+) -> Path:
+    """Return the deterministic raw HTML path for one school detail."""
+
+    if not source_detail_id.strip():
+        raise ValueError("source_detail_id cannot be empty.")
+
+    return raw_dir / "crawls" / crawl_id / "details" / f"{source_detail_id}.html"
+
+
+def write_raw_text(
+    path: Path,
+    content: str,
+) -> None:
+    """Atomically write raw source text."""
+
+    path.parent.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    temporary_path = None
+
+    try:
+        with NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=path.parent,
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as file:
+            temporary_path = Path(file.name)
+
+            file.write(content)
+
+            file.flush()
+
+            os.fsync(file.fileno())
+
+        os.replace(
+            temporary_path,
+            path,
+        )
+
+    except Exception:
+        if temporary_path is not None:
+            temporary_path.unlink(missing_ok=True)
+
+        raise

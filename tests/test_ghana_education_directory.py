@@ -5,6 +5,7 @@ import pytest
 
 from schoolminer.sources.ghana_education_directory import (
     extract_antiforgery_token,
+    fetch_detail_page,
     fetch_search_page,
     parse_search_response,
 )
@@ -178,3 +179,34 @@ def test_parse_search_response_rejects_invalid_schema() -> None:
 
     with pytest.raises(ValueError, match="did not match the expected schema."):
         parse_search_response(response)
+
+
+def test_fetch_detail_page_uses_expected_url() -> None:
+    captured_request = None
+
+    def handler(
+        request: httpx.Request,
+    ) -> httpx.Response:
+        nonlocal captured_request
+
+        captured_request = request
+
+        return httpx.Response(
+            200,
+            request=request,
+            text="<html></html>",
+        )
+
+    transport = httpx.MockTransport(handler)
+
+    with httpx.Client(transport=transport) as client:
+        response = fetch_detail_page(
+            client,
+            school_id="1109",
+        )
+
+    assert response.status_code == 200
+
+    assert captured_request is not None
+
+    assert str(captured_request.url) == ("https://ghanaeducationdirectory.com/Search/Details/1109")

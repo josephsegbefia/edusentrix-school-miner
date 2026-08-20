@@ -6,8 +6,10 @@ import pytest
 from schoolminer.models.raw import RawDirectoryRecord
 from schoolminer.storage.raw_store import (
     append_raw_record,
+    raw_detail_path,
     raw_page_path,
     write_raw_page,
+    write_raw_text,
 )
 
 
@@ -245,3 +247,48 @@ def test_write_raw_page_rejects_mixed_pages(
         )
 
     assert not output_path.exists()
+
+
+def test_raw_detail_path_is_deterministic(
+    tmp_path,
+) -> None:
+    path = raw_detail_path(
+        tmp_path,
+        "test-crawl",
+        "1109",
+    )
+
+    assert path == (tmp_path / "crawls" / "test-crawl" / "details" / "1109.html")
+
+
+def test_write_raw_text_writes_complete_content(
+    tmp_path,
+) -> None:
+    output_path = tmp_path / "1109.html"
+
+    content = "<html><body>1 SIGNAL REGIMENT BASIC</body></html>"
+
+    write_raw_text(
+        output_path,
+        content,
+    )
+
+    assert output_path.read_text(encoding="utf-8") == content
+
+
+def test_write_raw_text_replaces_previous_attempt(
+    tmp_path,
+) -> None:
+    output_path = tmp_path / "1109.html"
+
+    write_raw_text(
+        output_path,
+        "first attempt",
+    )
+
+    write_raw_text(
+        output_path,
+        "second attempt",
+    )
+
+    assert output_path.read_text(encoding="utf-8") == "second attempt"
