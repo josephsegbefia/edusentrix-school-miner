@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-from typing import List, Literal, Optional
+from typing import Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
-
 
 Ownership = Literal[
     "PUBLIC",
@@ -66,4 +65,4 @@ class CleanDirectorySchool(BaseModel):
 
     phone_raw: Optional[str] = None
 
-    phones: List[CleanPhone] = Field(default_factory=list)
+    phones: list[CleanPhone] = Field(default_factory=list)

@@ -135,7 +135,7 @@ def audit_raw_crawl(
                     record,
                     dict,
                 ):
-                    raise ValueError("Raw page record must be a JSON object.")
+                    raise TypeError("Raw page record must be a JSON object.")
 
                 raw = record.get("raw")
 
@@ -143,7 +143,7 @@ def audit_raw_crawl(
                     raw,
                     dict,
                 ):
-                    raise ValueError("Raw page record is missing its raw object.")
+                    raise TypeError("Raw page record is missing its raw object.")
 
                 records_total += 1
 

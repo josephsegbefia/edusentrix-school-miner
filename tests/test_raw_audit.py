@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -112,7 +114,7 @@ def test_audit_raw_crawl_counts_records(
     }
 
 
-def test_audit_raw_crawl_counts_records(
+def test_audit_raw_crawl_counts_records_twice(
     tmp_path,
 ) -> None:
     crawl_id = "test-crawl"
