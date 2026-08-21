@@ -32,6 +32,9 @@ from schoolminer.storage.sqlite_store import (
     get_crawl_job,
     update_crawl_status,
 )
+from schoolminer.scraping.detail_crawler import (
+    run_detail_acquisition,
+)
 
 app = typer.Typer(
     help=(
@@ -651,6 +654,159 @@ def scrape(
             "schoolminer scrape "
             f"--resume {final_crawl.crawl_id} "
             f"--limit {limit}" + (" --insecure" if insecure else "") + "[/cyan]"
+        )
+
+
+@app.command("scrape-details")
+def scrape_details(
+    crawl_id: str = typer.Option(
+        ...,
+        "--crawl",
+        help=("Listing crawl whose unique schools should have detail pages acquired."),
+    ),
+    limit: int = typer.Option(
+        10,
+        "--limit",
+        min=1,
+        help=("Maximum number of new detail pages to complete during this invocation."),
+    ),
+    delay_seconds: float = typer.Option(
+        1.0,
+        "--delay",
+        min=0.0,
+        help=("Delay in seconds between completed detail-page requests."),
+    ),
+    insecure: bool = typer.Option(
+        False,
+        "--insecure",
+        help=(
+            "Disable TLS certificate verification. "
+            "Use only when explicitly required by "
+            "the source website."
+        ),
+    ),
+) -> None:
+    """Acquire school detail pages for a listing crawl."""
+
+    crawl = get_crawl_job(
+        STATE_DB_PATH,
+        crawl_id,
+    )
+
+    if crawl is None:
+        raise typer.BadParameter(
+            f"Unknown crawl ID: {crawl_id}",
+            param_hint="--crawl",
+        )
+
+    if insecure:
+        typer.echo("WARNING: TLS certificate verification is disabled.")
+        typer.echo()
+
+    typer.echo(f"Detail crawl: {crawl_id}")
+
+    typer.echo(f"Category: {crawl.category}")
+
+    typer.echo(f"Region: {crawl.region_filter}")
+
+    typer.echo(f"Run limit: {limit} detail pages")
+
+    typer.echo(f"Request delay: {delay_seconds:g} seconds")
+
+    typer.echo()
+
+    def on_detail_completed(
+        source_id: str,
+        completed: int,
+        total: int,
+    ) -> None:
+        typer.echo(f"✓ {source_id} — {completed:,}/{total:,}")
+
+    def on_detail_retry(
+        source_id: str,
+        attempt: int,
+        max_attempts: int,
+        wait_seconds: float,
+        error: str,
+    ) -> None:
+        typer.echo(f"⚠ Detail {source_id} attempt {attempt}/{max_attempts} failed: {error}")
+
+        typer.echo(f"Retrying in {wait_seconds:g} seconds...")
+
+    try:
+        with build_client(verify=not insecure) as client:
+            result = run_detail_acquisition(
+                client,
+                state_db_path=(STATE_DB_PATH),
+                raw_dir=RAW_DIR,
+                crawl_id=crawl_id,
+                limit=limit,
+                delay_seconds=(delay_seconds),
+                on_detail_completed=(on_detail_completed),
+                on_detail_retry=(on_detail_retry),
+            )
+
+    except KeyboardInterrupt:
+        typer.echo()
+        typer.echo("Detail acquisition interrupted.")
+
+        typer.echo(
+            "Completed detail pages remain checkpointed and will be skipped when you resume."
+        )
+
+        typer.echo()
+        typer.echo("Resume with:")
+
+        typer.echo(
+            "schoolminer scrape-details "
+            f"--crawl {crawl_id} "
+            f"--limit {limit}" + (" --insecure" if insecure else "")
+        )
+
+        raise typer.Exit(code=130)
+
+    except Exception as exc:
+        typer.echo()
+        typer.echo(
+            f"Detail acquisition failed: {exc}",
+            err=True,
+        )
+
+        typer.echo(
+            "The failed detail can be retried without refetching completed details.",
+            err=True,
+        )
+
+        typer.echo()
+        typer.echo("Resume with:")
+
+        typer.echo(
+            "schoolminer scrape-details "
+            f"--crawl {crawl_id} "
+            f"--limit {limit}" + (" --insecure" if insecure else "")
+        )
+
+        raise typer.Exit(code=1)
+
+    typer.echo()
+    typer.echo("Detail acquisition run complete.")
+
+    typer.echo(f"Candidates: {result.candidates_total:,}")
+
+    typer.echo(f"Completed this run: {result.completed_this_run:,}")
+
+    typer.echo(f"Completed total: {result.completed_total:,}")
+
+    typer.echo(f"Remaining: {result.remaining_total:,}")
+
+    if result.remaining_total > 0:
+        typer.echo()
+        typer.echo("Resume with:")
+
+        typer.echo(
+            "schoolminer scrape-details "
+            f"--crawl {crawl_id} "
+            f"--limit {limit}" + (" --insecure" if insecure else "")
         )
 
 
