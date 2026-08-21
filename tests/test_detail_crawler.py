@@ -11,7 +11,6 @@ from schoolminer.scraping.crawler import (
 )
 from schoolminer.scraping.detail_crawler import (
     run_detail_acquisition,
-    unique_source_detail_ids,
 )
 from schoolminer.storage.raw_store import (
     raw_detail_path,
@@ -387,19 +386,21 @@ def test_detail_acquisition_rejects_non_school_html(
 
     transport = httpx.MockTransport(handler)
 
-    with httpx.Client(transport=transport) as client:
-        with pytest.raises(
+    with (
+        httpx.Client(transport=transport) as client,
+        pytest.raises(
             ValueError,
             match="school name",
-        ):
-            run_detail_acquisition(
-                client,
-                state_db_path=(database_path),
-                raw_dir=raw_dir,
-                crawl_id=(job.crawl_id),
-                limit=1,
-                delay_seconds=0,
-            )
+        ),
+    ):
+        run_detail_acquisition(
+            client,
+            state_db_path=(database_path),
+            raw_dir=raw_dir,
+            crawl_id=(job.crawl_id),
+            limit=1,
+            delay_seconds=0,
+        )
 
     checkpoint = get_detail_fetch(
         database_path,

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import httpx
 
-
 RETRYABLE_HTTP_STATUS_CODES = {
     408,
     429,

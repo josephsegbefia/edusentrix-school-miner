@@ -18,6 +18,10 @@ from schoolminer.config import (
 )
 from schoolminer.models.crawl import CrawlJob
 from schoolminer.models.raw import RawDirectoryRecord
+from schoolminer.scraping.retry import (
+    is_retryable_http_error,
+    retry_delay,
+)
 from schoolminer.sources.ghana_education_directory import (
     SOURCE_NAME,
     extract_antiforgery_token,
@@ -36,10 +40,6 @@ from schoolminer.storage.sqlite_store import (
     set_crawl_total_pages,
     start_crawl_page,
     update_crawl_status,
-)
-from schoolminer.scraping.retry import (
-    is_retryable_http_error,
-    retry_delay,
 )
 
 PageCompletedCallback = Callable[

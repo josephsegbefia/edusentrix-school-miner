@@ -39,7 +39,6 @@ from schoolminer.storage.sqlite_store import (
     start_detail_fetch,
 )
 
-
 DetailCompletedCallback = Callable[
     [str, int, int],
     None,

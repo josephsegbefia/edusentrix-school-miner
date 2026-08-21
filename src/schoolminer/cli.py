@@ -23,6 +23,7 @@ from schoolminer.scraping.crawler import (
     create_directory_crawl,
     run_directory_crawl,
 )
+from schoolminer.scraping.detail_crawler import run_detail_acquisition
 from schoolminer.sources.ghana_education_directory import (
     extract_antiforgery_token,
     fetch_search_page,
@@ -31,9 +32,6 @@ from schoolminer.sources.ghana_education_directory import (
 from schoolminer.storage.sqlite_store import (
     get_crawl_job,
     update_crawl_status,
-)
-from schoolminer.scraping.detail_crawler import (
-    run_detail_acquisition,
 )
 
 app = typer.Typer(
@@ -595,7 +593,14 @@ def scrape(
 
         raise typer.Exit(code=130)
 
-    except Exception as exc:
+    except (
+        httpx.RequestError,
+        httpx.HTTPStatusError,
+        ValueError,
+        TypeError,
+        RuntimeError,
+        OSError,
+    ) as exc:
         failed_crawl = get_crawl_job(
             STATE_DB_PATH,
             crawl.crawl_id,
@@ -765,7 +770,7 @@ def scrape_details(
 
         raise typer.Exit(code=130)
 
-    except Exception as exc:
+    except ValueError as exc:
         typer.echo()
         typer.echo(
             f"Detail acquisition failed: {exc}",

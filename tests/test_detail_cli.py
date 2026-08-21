@@ -1,12 +1,11 @@
+from __future__ import annotations
+
 from types import SimpleNamespace
 
 from typer.testing import CliRunner
 
 from schoolminer.cli import app
-from schoolminer.models.detail_acquisition import (
-    DetailAcquisitionResult,
-)
-
+from schoolminer.models.detail_acquisition import DetailAcquisitionResult
 
 runner = CliRunner()
 
