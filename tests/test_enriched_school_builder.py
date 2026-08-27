@@ -138,7 +138,7 @@ def test_builder_resolves_historical_geography() -> None:
 
 
 def test_builder_marks_invalid_email_for_review() -> None:
-    detail = build_detail().model_copy(update={"email_raw": ("felixgyawa.vra.com")})
+    detail = build_detail().model_copy(update={"email_raw": "felixgyawa.vra.com"})
 
     candidate = build_enriched_school_candidate(
         build_listing(),
